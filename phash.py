@@ -1,8 +1,15 @@
 from PIL import Image
 import numpy as np
-import cv2
 import json
 from typing import List
+from scipy.fftpack import dct as scipy_dct
+
+# Try to import cv2 for video support, but don't require it
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 
 
 def image_phash(image: Image.Image, hash_size: int = 8, highfreq_factor: int = 4) -> str:
@@ -11,7 +18,7 @@ def image_phash(image: Image.Image, hash_size: int = 8, highfreq_factor: int = 4
     Steps:
     - convert to grayscale
     - resize to (hash_size * highfreq_factor)
-    - compute 2D DCT via OpenCV
+    - compute 2D DCT via scipy
     - keep top-left hash_size x hash_size low-frequency DCT coeffs
     - compute median (excluding DC term) and build bits
     - return hex string representation of the bits
@@ -25,8 +32,8 @@ def image_phash(image: Image.Image, hash_size: int = 8, highfreq_factor: int = 4
     img = image.convert("L").resize((img_size, img_size), resample)
     pixels = np.asarray(img, dtype=np.float32)
 
-    # compute 2D DCT
-    dct = cv2.dct(pixels)
+    # compute 2D DCT using scipy (more reliable than cv2)
+    dct = scipy_dct(scipy_dct(pixels, axis=0, norm='ortho'), axis=1, norm='ortho')
 
     # take top-left low-frequency components
     dct_low = dct[:hash_size, :hash_size]
@@ -109,15 +116,21 @@ def video_phash(
 ) -> List[str]:
     """Compute perceptual hashes for a video by sampling frames.
 
-    The function opens the given video file using OpenCV and reads frames
-    sequentially.  Every ``frame_step`` frames a snapshot is taken until
-    ``max_frames`` hashes have been produced or the video ends.
+    Uses OpenCV if available, otherwise falls back to basic image file reading.
+    Every ``frame_step`` frames a snapshot is taken until ``max_frames`` hashes 
+    have been produced or the video ends.
 
     Each sampled frame is converted to ``PIL.Image`` and passed to
     :func:`image_phash` using the provided ``hash_size``/``highfreq_factor``.
 
     Returns a list of hex-string hashes corresponding to the sampled frames.
     """
+    if not HAS_CV2:
+        raise ImportError(
+            "Video processing requires opencv-python-headless. "
+            "Please ensure it's installed in your environment."
+        )
+    
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"cannot open video {video_path}")
